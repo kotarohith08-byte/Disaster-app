@@ -19,6 +19,7 @@ export default function App() {
   
   // Real-time live data state
   const [liveData, setLiveData] = useState({ events: [], last_updated: null, status: 'connecting', sources_status: {} });
+  const [sourcesHealth, setSourcesHealth] = useState(null);
   const [liveAlerts, setLiveAlerts] = useState([]);
   const [communityIncidents, setCommunityIncidents] = useState([]);
   const [selectedIncident, setSelectedIncident] = useState(null);
@@ -28,18 +29,23 @@ export default function App() {
   const fetchLiveFeeds = useCallback(async (forceRefresh = false) => {
     setIsRefreshing(true);
     try {
-      const [disastersRes, alertsRes, communityRes] = await Promise.all([
+      const [disastersRes, alertsRes, communityRes, healthRes] = await Promise.all([
         api.getLiveDisasters({ refresh: forceRefresh }),
         api.getLiveAlerts(),
-        api.getIncidents()
+        api.getIncidents(),
+        api.getSourcesHealth().catch(() => null)
       ]);
 
       setLiveData({
         events: disastersRes.events || [],
         last_updated: disastersRes.last_updated || new Date().toISOString(),
         status: disastersRes.status || 'online',
-        sources_status: disastersRes.sources_status || {}
+        sources_status: disastersRes.sources_status || (healthRes?.sources || {})
       });
+
+      if (healthRes) {
+        setSourcesHealth(healthRes);
+      }
 
       setLiveAlerts(alertsRes.alerts || []);
       setCommunityIncidents(communityRes || []);
@@ -120,6 +126,7 @@ export default function App() {
         {activeTab === 'monitor' && (
           <LiveMonitoringDashboard
             liveData={liveData}
+            sourcesHealth={sourcesHealth}
             onSelectEvent={setSelectedIncident}
             onOpenMap={() => setActiveTab('map')}
             onRefresh={() => fetchLiveFeeds(true)}
@@ -162,8 +169,11 @@ export default function App() {
         {activeTab === 'admin' && (
           <AdminDashboard
             incidents={communityIncidents}
+            sourcesHealth={sourcesHealth}
+            liveData={liveData}
             onIncidentUpdated={handleIncidentUpdated}
             onIncidentDeleted={handleIncidentDeleted}
+            onRefreshFeeds={() => fetchLiveFeeds(true)}
             user={user}
             onOpenAuth={() => setAuthModalOpen(true)}
           />

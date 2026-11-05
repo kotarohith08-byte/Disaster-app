@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   ShieldAlert, 
@@ -13,14 +13,32 @@ import {
   Lock, 
   FileText,
   Filter,
-  UserCheck
+  UserCheck,
+  Server,
+  Activity,
+  Wifi,
+  WifiOff,
+  Database,
+  RefreshCw,
+  Settings,
+  AlertCircle,
+  CheckCircle2,
+  XCircle,
+  Globe,
+  Radio,
+  ExternalLink,
+  Cpu,
+  Clock
 } from 'lucide-react';
-import { api } from '../api/client';
+import { api, getCustomBackendUrl, setCustomBackendUrl } from '../api/client';
 
 export default function AdminDashboard({ 
   incidents = [], 
+  sourcesHealth = null,
+  liveData = null,
   onIncidentUpdated, 
   onIncidentDeleted, 
+  onRefreshFeeds,
   user, 
   onOpenAuth 
 }) {
@@ -34,6 +52,23 @@ export default function AdminDashboard({
   const [loadingAction, setLoadingAction] = useState(false);
   const [actionMessage, setActionMessage] = useState('');
 
+  // Backend Bridge Configuration State
+  const [backendUrl, setBackendUrlState] = useState('');
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionTestResult, setConnectionTestResult] = useState(null);
+  const [localHealth, setLocalHealth] = useState(sourcesHealth);
+  const [isRefreshingSources, setIsRefreshingSources] = useState(false);
+
+  useEffect(() => {
+    setBackendUrlState(getCustomBackendUrl());
+  }, []);
+
+  useEffect(() => {
+    if (sourcesHealth) {
+      setLocalHealth(sourcesHealth);
+    }
+  }, [sourcesHealth]);
+
   // Access check
   if (!user || user.role !== 'admin') {
     return (
@@ -43,7 +78,7 @@ export default function AdminDashboard({
         </div>
         <h2 className="text-2xl font-black text-white">Administrator Access Required</h2>
         <p className="text-sm text-slate-400">
-          The operational incident triage console is reserved for verified disaster management personnel.
+          The operational incident triage and system telemetry console is reserved for verified disaster management personnel.
         </p>
         <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl text-xs text-slate-300">
           You can test all administrative controls by signing in with the pre-configured administrator demo credentials.
@@ -57,6 +92,68 @@ export default function AdminDashboard({
       </div>
     );
   }
+
+  // Handle Backend URL Save
+  const handleSaveBackendUrl = async () => {
+    setCustomBackendUrl(backendUrl);
+    setConnectionTestResult({
+      success: true,
+      message: backendUrl 
+        ? `Custom backend endpoint set to: ${backendUrl}. Reloading telemetry sources...`
+        : 'Reverted to direct browser static mode (USGS/NASA direct telemetry).'
+    });
+    if (onRefreshFeeds) onRefreshFeeds();
+    handleTestConnection();
+  };
+
+  // Test backend connection
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    setConnectionTestResult(null);
+    const start = performance.now();
+    try {
+      const urlToTest = backendUrl.trim().replace(/\/$/, '');
+      const testEndpoint = urlToTest ? `${urlToTest}/api/health` : `/api/health`;
+      const res = await fetch(testEndpoint, { signal: AbortSignal.timeout(4000) });
+      const latency = Math.round(performance.now() - start);
+      if (res.ok) {
+        const data = await res.json();
+        setConnectionTestResult({
+          success: true,
+          latency,
+          message: `Connected successfully! (${latency}ms) — Server status: ${data.status || 'healthy'}`
+        });
+      } else {
+        setConnectionTestResult({
+          success: false,
+          latency,
+          message: `Endpoint returned HTTP ${res.status}. Falling back to browser client mode.`
+        });
+      }
+    } catch (err) {
+      setConnectionTestResult({
+        success: false,
+        message: `Direct backend unreachable (${err.message}). The application is currently functioning via direct browser API ingestion.`
+      });
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const handleRefreshSources = async () => {
+    setIsRefreshingSources(true);
+    try {
+      const h = await api.getSourcesHealth();
+      setLocalHealth(h);
+      if (onRefreshFeeds) onRefreshFeeds();
+      setActionMessage('Upstream telemetry sources synchronized successfully.');
+      setTimeout(() => setActionMessage(''), 4000);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsRefreshingSources(false);
+    }
+  };
 
   // Filtered incidents
   const filtered = incidents.filter((inc) => {
@@ -126,6 +223,8 @@ export default function AdminDashboard({
     }
   };
 
+  const sourcesList = localHealth?.sources ? Object.entries(localHealth.sources) : [];
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Top Banner */}
@@ -136,18 +235,27 @@ export default function AdminDashboard({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-black text-white">Incident Response Command Center</h1>
+              <h1 className="text-2xl font-black text-white">Emergency Operations Admin Console</h1>
               <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 Administrator
               </span>
             </div>
             <p className="text-xs text-slate-400">
-              Logged in as {user.name} ({user.email}) • Full incident audit and verification privileges
+              Logged in as {user.name} ({user.email}) • Real-time telemetry monitoring, system health & incident triage
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleRefreshSources}
+            disabled={isRefreshingSources}
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 rounded-xl text-xs font-semibold transition-all shadow-sm"
+          >
+            <RefreshCw className={`w-4 h-4 ${isRefreshingSources ? 'animate-spin' : ''}`} />
+            <span>Audit Feeds</span>
+          </button>
+
           <a
             href={api.getExportCsvUrl()}
             target="_blank"
@@ -155,7 +263,7 @@ export default function AdminDashboard({
             className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold border border-slate-700 transition-all shadow-sm"
           >
             <Download className="w-4 h-4 text-blue-400" />
-            <span>Export Incident Data (CSV)</span>
+            <span>Export CSV</span>
           </a>
         </div>
       </div>
@@ -167,7 +275,215 @@ export default function AdminDashboard({
         </div>
       )}
 
-      {/* KPI Cards */}
+      {/* SECTION 1: SYSTEM ARCHITECTURE & GITHUB PAGES DUAL-MODE BRIDGE */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30 flex items-center justify-center">
+              <Server className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <span>System Architecture & Backend Bridge Diagnostics</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30 uppercase">
+                  Dual-Mode Enabled
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                Configure connectivity between GitHub Pages static hosting and self-hosted Flask API
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-slate-400">Runtime Mode:</span>
+            {backendUrl ? (
+              <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono font-semibold flex items-center gap-1.5">
+                <Wifi className="w-3.5 h-3.5" /> Deployed API Bridge
+              </span>
+            ) : (
+              <span className="px-2.5 py-1 rounded-lg bg-blue-500/20 text-blue-300 border border-blue-500/30 font-mono font-semibold flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5" /> Direct Browser Static Mode
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Informative Architecture Callout */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div className="p-4 bg-slate-800/50 border border-slate-700/60 rounded-2xl space-y-1">
+            <div className="font-semibold text-white flex items-center gap-2">
+              <Globe className="w-4 h-4 text-blue-400" />
+              <span>Static GitHub Pages</span>
+            </div>
+            <p className="text-slate-400 text-[11px] leading-relaxed">
+              Fetches USGS Seismology, NASA EONET orbital events, and Open-Meteo weather directly via browser HTTPS CORS. No server required.
+            </p>
+          </div>
+
+          <div className="p-4 bg-slate-800/50 border border-slate-700/60 rounded-2xl space-y-1">
+            <div className="font-semibold text-white flex items-center gap-2">
+              <Cpu className="w-4 h-4 text-emerald-400" />
+              <span>Flask REST API Service</span>
+            </div>
+            <p className="text-slate-400 text-[11px] leading-relaxed">
+              Provides multi-hazard GDACS ingestion, thread-safe memory caching, SQLite persistence, and Scikit-learn NLP classification.
+            </p>
+          </div>
+
+          <div className="p-4 bg-slate-800/50 border border-slate-700/60 rounded-2xl space-y-1">
+            <div className="font-semibold text-white flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-400" />
+              <span>Automatic Polling Cadence</span>
+            </div>
+            <p className="text-slate-400 text-[11px] leading-relaxed">
+              Dashboard automatically syncs every 60 seconds with 120-second backend rate-limiting cache to respect upstream API quotas.
+            </p>
+          </div>
+        </div>
+
+        {/* Backend Endpoint Config Form */}
+        <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-4 space-y-3">
+          <label className="block text-xs font-semibold text-slate-300">
+            Custom Deployed Backend API URL (Optional)
+          </label>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+            <input
+              type="text"
+              value={backendUrl}
+              onChange={(e) => setBackendUrlState(e.target.value)}
+              placeholder="e.g. https://disasterai-backend.onrender.com or http://localhost:5000"
+              className="flex-1 px-4 py-2 bg-slate-900 border border-slate-700 rounded-xl text-xs font-mono text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            />
+            <button
+              onClick={handleSaveBackendUrl}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition-all shadow-sm"
+            >
+              Save URL
+            </button>
+            <button
+              onClick={handleTestConnection}
+              disabled={testingConnection}
+              className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition-all flex items-center justify-center gap-1.5"
+            >
+              <Activity className={`w-3.5 h-3.5 ${testingConnection ? 'animate-spin' : ''}`} />
+              <span>{testingConnection ? 'Testing...' : 'Test Connection'}</span>
+            </button>
+            {backendUrl && (
+              <button
+                onClick={() => {
+                  setBackendUrlState('');
+                  setCustomBackendUrl('');
+                  setConnectionTestResult({
+                    success: true,
+                    message: 'Reset to direct client static mode.'
+                  });
+                }}
+                className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-semibold transition-all"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
+          {connectionTestResult && (
+            <div className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+              connectionTestResult.success 
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+            }`}>
+              {connectionTestResult.success ? (
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-400" />
+              ) : (
+                <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-400" />
+              )}
+              <span>{connectionTestResult.message}</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* SECTION 2: LIVE UPSTREAM TELEMETRY SOURCES AUDIT MATRIX */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center justify-center">
+              <Activity className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <span>Upstream Live Telemetry Sources Health Matrix</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">
+                  {sourcesList.filter(([, s]) => s.status === 'connected').length}/{sourcesList.length} Online
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400">
+                Audited connection state, response latency, record counts, and last synchronization timestamps
+              </p>
+            </div>
+          </div>
+
+          <div className="text-right text-xs text-slate-400">
+            Last Sync: <span className="font-mono text-white">{localHealth?.last_sync ? new Date(localHealth.last_sync).toLocaleTimeString() : 'Active'}</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {sourcesList.map(([key, source]) => {
+            const isConn = source.status === 'connected';
+            const isDeg = source.status === 'degraded';
+            return (
+              <div 
+                key={key} 
+                className={`p-4 rounded-2xl border transition-all ${
+                  isConn ? 'bg-slate-950/60 border-slate-800 hover:border-emerald-500/40' :
+                  isDeg ? 'bg-amber-950/20 border-amber-500/30' :
+                  'bg-slate-950/40 border-slate-800/80 opacity-90'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <h3 className="font-bold text-white text-xs">{source.source_name || key}</h3>
+                    <p className="text-[10px] text-slate-400 mt-0.5">{source.category}</p>
+                  </div>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                    isConn ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
+                    isDeg ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                    'bg-red-500/20 text-red-400 border border-red-500/30'
+                  }`}>
+                    {source.status}
+                  </span>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-slate-800/80 grid grid-cols-2 gap-2 text-[11px]">
+                  <div>
+                    <span className="text-slate-500 text-[10px] block">Live Records</span>
+                    <span className="font-mono font-bold text-white text-sm">{source.records_count ?? 0}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 text-[10px] block">Latency</span>
+                    <span className="font-mono font-bold text-slate-300">{source.latency_ms || 0} ms</span>
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-500 text-[10px] block">Latest Event</span>
+                    <span className="font-mono text-slate-300 truncate block text-[10px]">
+                      {source.latest_event_time ? new Date(source.latest_event_time).toLocaleString() : 'No active alerts'}
+                    </span>
+                  </div>
+                </div>
+
+                {source.error && (
+                  <div className="mt-2.5 p-2 rounded-lg bg-red-500/10 border border-red-500/20 text-[10px] text-red-300 leading-snug">
+                    {source.error}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* SECTION 3: KPI CARDS */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-5">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total Incidents</span>
@@ -194,7 +510,7 @@ export default function AdminDashboard({
         </div>
       </div>
 
-      {/* Incident Management Table Section */}
+      {/* SECTION 4: COMMUNITY INCIDENT TRIAGE & VERIFICATION */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-2xl space-y-4">
         {/* Search & Filter Header */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -276,7 +592,7 @@ export default function AdminDashboard({
                       <div className="font-semibold text-white truncate">{inc.title}</div>
                       <div className="text-[11px] text-slate-400 truncate">📍 {inc.location}</div>
                       <div className="text-[10px] text-slate-500 font-mono mt-0.5">
-                        {inc.latitude.toFixed(4)}, {inc.longitude.toFixed(4)}
+                        {inc.latitude ? Number(inc.latitude).toFixed(4) : 0}, {inc.longitude ? Number(inc.longitude).toFixed(4) : 0}
                       </div>
                     </td>
 

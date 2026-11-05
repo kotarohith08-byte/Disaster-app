@@ -1,10 +1,12 @@
+from datetime import datetime, timezone, timedelta
 from flask import Blueprint, request, jsonify
 from backend.services.live_disaster_service import (
     get_live_disasters,
     fetch_open_meteo_weather,
     search_locations_geocoding,
     generate_ai_disaster_intelligence,
-    haversine_km
+    haversine_km,
+    is_in_region
 )
 
 live_bp = Blueprint('live', __name__)
@@ -17,8 +19,8 @@ def get_disasters():
 
     # Filter by region
     region = request.args.get('region', 'global').lower()
-    if region == 'india':
-        events = [e for e in events if e.get('is_in_india')]
+    if region != 'global':
+        events = [e for e in events if is_in_region(e['latitude'], e['longitude'], region)]
 
     # Filter by category
     category = request.args.get('category', 'All')
@@ -30,7 +32,30 @@ def get_disasters():
     if severity and severity != 'All':
         events = [e for e in events if e.get('severity') == severity.upper()]
 
-    # Proximity filter (lat, lng, radius_km)
+    # Filter by time range (24h, 48h, 7d, all)
+    time_range = request.args.get('time_range', 'all').lower()
+    if time_range != 'all':
+        now = datetime.now(timezone.utc)
+        hours_map = {'24h': 24, '48h': 48, '7d': 168}
+        delta_hours = hours_map.get(time_range, 168)
+        cutoff = now - timedelta(hours=delta_hours)
+        
+        filtered_by_time = []
+        for e in events:
+            try:
+                t_str = e.get('event_time')
+                if t_str:
+                    # Clean ISO format
+                    dt = datetime.fromisoformat(t_str.replace('Z', '+00:00'))
+                    if dt >= cutoff:
+                        filtered_by_time.append(e)
+                else:
+                    filtered_by_time.append(e)
+            except Exception:
+                filtered_by_time.append(e)
+        events = filtered_by_time
+
+    # Proximity filter
     lat = request.args.get('lat', type=float)
     lng = request.args.get('lng', type=float)
     radius = request.args.get('radius_km', type=float)
@@ -49,8 +74,21 @@ def get_disasters():
         'status': cache['status'],
         'last_updated': cache.get('last_updated_iso'),
         'total_count': len(events),
-        'sources_status': cache.get('sources_status'),
+        'new_events_count': cache.get('new_events_count', 0),
+        'telemetry_health': cache.get('telemetry_health', {}),
         'events': events
+    }), 200
+
+@live_bp.route('/sources-health', methods=['GET'])
+def get_sources_health():
+    force_refresh = request.args.get('refresh', '').lower() == 'true'
+    cache = get_live_disasters(force_refresh=force_refresh)
+    return jsonify({
+        'overall_status': cache['status'],
+        'last_sync': cache.get('last_updated_iso'),
+        'total_events': cache.get('total_count', 0),
+        'new_events_this_cycle': cache.get('new_events_count', 0),
+        'sources': cache.get('telemetry_health', {})
     }), 200
 
 @live_bp.route('/summary', methods=['GET'])
@@ -64,16 +102,13 @@ def get_summary():
     medium = sum(1 for e in events if e.get('severity') == 'MEDIUM')
     low = sum(1 for e in events if e.get('severity') == 'LOW')
 
-    # Categories count
     cat_counts = {}
     for e in events:
         cat = e.get('category', 'Other')
         cat_counts[cat] = cat_counts.get(cat, 0) + 1
 
-    # India specific
-    india_events = [e for e in events if e.get('is_in_india')]
+    india_events = [e for e in events if is_in_region(e['latitude'], e['longitude'], 'india')]
 
-    # Sources count
     source_counts = {}
     for e in events:
         src = e.get('source', 'Unknown')
@@ -88,9 +123,10 @@ def get_summary():
         'medium_alerts': medium,
         'low_alerts': low,
         'india_events_count': len(india_events),
+        'new_events_count': cache.get('new_events_count', 0),
         'categories': [{'name': k, 'count': v} for k, v in cat_counts.items()],
         'sources': [{'name': k, 'count': v} for k, v in source_counts.items()],
-        'sources_status': cache.get('sources_status')
+        'telemetry_health': cache.get('telemetry_health', {})
     }), 200
 
 @live_bp.route('/weather', methods=['GET'])
@@ -110,11 +146,10 @@ def geocode():
 def get_alerts():
     cache = get_live_disasters()
     events = cache['events']
-    # Return Critical and High severity events as active alerts
     alerts = [e for e in events if e.get('severity') in ['CRITICAL', 'HIGH']]
     return jsonify({
         'count': len(alerts),
-        'alerts': alerts[:20]  # Top 20 prominent alerts
+        'alerts': alerts[:25]
     }), 200
 
 @live_bp.route('/ai-intelligence', methods=['POST'])
@@ -125,8 +160,8 @@ def ai_intelligence():
 
     cache = get_live_disasters()
     events = cache['events']
-    if region == 'india':
-        events = [e for e in events if e.get('is_in_india')]
+    if region != 'global':
+        events = [e for e in events if is_in_region(e['latitude'], e['longitude'], region)]
 
     intelligence = generate_ai_disaster_intelligence(
         events=events,
