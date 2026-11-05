@@ -30,9 +30,18 @@ export default function App() {
     setIsRefreshing(true);
     try {
       const [disastersRes, alertsRes, communityRes, healthRes] = await Promise.all([
-        api.getLiveDisasters({ refresh: forceRefresh }),
-        api.getLiveAlerts(),
-        api.getIncidents(),
+        api.getLiveDisasters({ refresh: forceRefresh }).catch(e => {
+          console.error('getLiveDisasters error:', e);
+          return { events: [], status: 'degraded' };
+        }),
+        api.getLiveAlerts().catch(e => {
+          console.error('getLiveAlerts error:', e);
+          return { alerts: [] };
+        }),
+        api.getIncidents().catch(e => {
+          console.error('getIncidents error:', e);
+          return [];
+        }),
         api.getSourcesHealth().catch(() => null)
       ]);
 

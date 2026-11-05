@@ -47,11 +47,25 @@ const authHeaders = () => {
   return token ? { 'Authorization': `Bearer ${token}` } : {};
 };
 
+export const getLocalIncidents = () => {
+  try {
+    const raw = localStorage.getItem('disaster_demo_incidents');
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [...INITIAL_DEMO_INCIDENTS];
+};
+
+export const isStaticHost = () => {
+  if (typeof window === 'undefined') return false;
+  const h = window.location.hostname;
+  return h.includes('github.io') || h.includes('netlify.app') || h.includes('vercel.app') || h.includes('pages.dev');
+};
+
 // DIRECT CORS-FRIENDLY PUBLIC API CLIENT FETCHERS (FOR GITHUB PAGES STATIC MODE)
 export async function directFetchUSGS() {
   const startT = performance.now();
   try {
-    const res = await fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson');
+    const res = await fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson');
     const latency = Math.round(performance.now() - startT);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
@@ -102,7 +116,7 @@ export async function directFetchUSGS() {
       audit: {
         source_name: 'USGS Earthquake API',
         category: 'Earthquakes & Tsunamis',
-        endpoint: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson',
+        endpoint: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson',
         status: events.length > 0 ? 'connected' : 'empty',
         records_count: events.length,
         latest_event_time: latestTime,
@@ -118,7 +132,7 @@ export async function directFetchUSGS() {
       audit: {
         source_name: 'USGS Earthquake API',
         category: 'Earthquakes & Tsunamis',
-        endpoint: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson',
+        endpoint: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson',
         status: 'unavailable',
         records_count: 0,
         latest_event_time: null,
