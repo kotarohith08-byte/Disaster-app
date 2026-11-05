@@ -1,91 +1,150 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Navbar from './components/Navbar';
-import LandingPage from './components/LandingPage';
+import LiveAlertBanner from './components/LiveAlertBanner';
+import LiveMonitoringDashboard from './components/LiveMonitoringDashboard';
 import DisasterMap from './components/DisasterMap';
+import LocationMonitor from './components/LocationMonitor';
+import AiIntelligenceView from './components/AiIntelligenceView';
 import ReportForm from './components/ReportForm';
 import AdminDashboard from './components/AdminDashboard';
-import AnalyticsView from './components/AnalyticsView';
 import SafetyGuide from './components/SafetyGuide';
 import AuthModal from './components/AuthModal';
 import IncidentDetailModal from './components/IncidentDetailModal';
 import { api, getStoredUser } from './api/client';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('home');
+  const [activeTab, setActiveTab] = useState('monitor');
   const [user, setUser] = useState(getStoredUser());
   const [authModalOpen, setAuthModalOpen] = useState(false);
-  const [incidents, setIncidents] = useState([]);
-  const [analytics, setAnalytics] = useState(null);
+  
+  // Real-time live data state
+  const [liveData, setLiveData] = useState({ events: [], last_updated: null, status: 'connecting', sources_status: {} });
+  const [liveAlerts, setLiveAlerts] = useState([]);
+  const [communityIncidents, setCommunityIncidents] = useState([]);
   const [selectedIncident, setSelectedIncident] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Load initial data
-  const loadData = async () => {
+  // Load Real-Time Live Disasters
+  const fetchLiveFeeds = useCallback(async (forceRefresh = false) => {
+    setIsRefreshing(true);
     try {
-      const [incidentsData, analyticsData] = await Promise.all([
-        api.getIncidents(),
-        api.getAnalytics()
+      const [disastersRes, alertsRes, communityRes] = await Promise.all([
+        api.getLiveDisasters({ refresh: forceRefresh }),
+        api.getLiveAlerts(),
+        api.getIncidents()
       ]);
-      setIncidents(incidentsData);
-      setAnalytics(analyticsData);
-    } catch (err) {
-      console.error('Error loading DisasterAI platform data:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  useEffect(() => {
-    loadData();
+      setLiveData({
+        events: disastersRes.events || [],
+        last_updated: disastersRes.last_updated || new Date().toISOString(),
+        status: disastersRes.status || 'online',
+        sources_status: disastersRes.sources_status || {}
+      });
+
+      setLiveAlerts(alertsRes.alerts || []);
+      setCommunityIncidents(communityRes || []);
+
+      // Browser Notification for new Critical Alert if permission granted
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        const crit = (alertsRes.alerts || []).find(a => a.severity === 'CRITICAL');
+        if (crit && !sessionStorage.getItem(`notif_${crit.id}`)) {
+          sessionStorage.setItem(`notif_${crit.id}`, 'true');
+          new Notification(`CRITICAL DISASTER ALERT: ${crit.title}`, {
+            body: `${crit.location} (${crit.source})`,
+            icon: '/favicon.svg'
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Error fetching real-time disaster telemetry:', err);
+      setLiveData(prev => ({ ...prev, status: 'degraded' }));
+    } finally {
+      setIsRefreshing(false);
+    }
   }, []);
+
+  // Initial load + Automatic 60-second polling interval
+  useEffect(() => {
+    fetchLiveFeeds();
+
+    // Auto-refresh every 60 seconds
+    const interval = setInterval(() => {
+      fetchLiveFeeds(true);
+    }, 60000);
+
+    return () => clearInterval(interval);
+  }, [fetchLiveFeeds]);
 
   const handleLogout = () => {
     api.logout();
     setUser(null);
-    if (activeTab === 'admin') setActiveTab('home');
+    if (activeTab === 'admin') setActiveTab('monitor');
   };
 
   const handleReportSubmitted = (newIncident) => {
-    setIncidents((prev) => [newIncident, ...prev]);
-    loadData();
-    // Switch to map to view the new incident
+    setCommunityIncidents(prev => [newIncident, ...prev]);
     setActiveTab('map');
   };
 
   const handleIncidentUpdated = (updated) => {
-    setIncidents((prev) => prev.map((item) => item.id === updated.id ? updated : item));
-    loadData();
+    setCommunityIncidents(prev => prev.map(item => item.id === updated.id ? updated : item));
   };
 
   const handleIncidentDeleted = (deletedId) => {
-    setIncidents((prev) => prev.filter((item) => item.id !== deletedId));
-    loadData();
+    setCommunityIncidents(prev => prev.filter(item => item.id !== deletedId));
   };
 
   return (
-    <div className="min-h-screen bg-[#0b132b] text-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-[#070b14] text-slate-100 flex flex-col font-sans selection:bg-red-500 selection:text-white">
+      {/* Top Critical Alert Ticker */}
+      <LiveAlertBanner
+        alerts={liveAlerts}
+        onSelectAlert={setSelectedIncident}
+      />
+
+      {/* Main Navbar */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         user={user}
         onOpenAuth={() => setAuthModalOpen(true)}
         onLogout={handleLogout}
+        liveStatus={liveData.status}
+        lastUpdated={liveData.last_updated}
+        onRefreshLive={() => fetchLiveFeeds(true)}
+        isRefreshing={isRefreshing}
       />
 
+      {/* Main View Port */}
       <main className="flex-1">
-        {activeTab === 'home' && (
-          <LandingPage
-            setActiveTab={setActiveTab}
-            analytics={analytics}
-            onOpenAuth={() => setAuthModalOpen(true)}
-            user={user}
+        {activeTab === 'monitor' && (
+          <LiveMonitoringDashboard
+            liveData={liveData}
+            onSelectEvent={setSelectedIncident}
+            onOpenMap={() => setActiveTab('map')}
+            onRefresh={() => fetchLiveFeeds(true)}
+            isRefreshing={isRefreshing}
           />
         )}
 
         {activeTab === 'map' && (
           <DisasterMap
-            incidents={incidents}
+            liveEvents={liveData.events}
+            communityIncidents={communityIncidents}
             onSelectIncident={setSelectedIncident}
+          />
+        )}
+
+        {activeTab === 'location' && (
+          <LocationMonitor
+            onSelectDisaster={setSelectedIncident}
+            liveEvents={liveData.events}
+          />
+        )}
+
+        {activeTab === 'intelligence' && (
+          <AiIntelligenceView
+            liveEvents={liveData.events}
           />
         )}
 
@@ -100,15 +159,9 @@ export default function App() {
           <SafetyGuide />
         )}
 
-        {activeTab === 'analytics' && (
-          <AnalyticsView
-            analytics={analytics}
-          />
-        )}
-
         {activeTab === 'admin' && (
           <AdminDashboard
-            incidents={incidents}
+            incidents={communityIncidents}
             onIncidentUpdated={handleIncidentUpdated}
             onIncidentDeleted={handleIncidentDeleted}
             user={user}
@@ -124,13 +177,26 @@ export default function App() {
         onAuthSuccess={(u) => setUser(u)}
       />
 
-      {/* Detailed Incident Modal */}
+      {/* Detailed Modal for clicked live/community incident */}
       {selectedIncident && (
         <IncidentDetailModal
           incident={selectedIncident}
           onClose={() => setSelectedIncident(null)}
         />
       )}
+
+      {/* EOC Footer */}
+      <footer className="border-t border-slate-800/80 bg-[#070b14] py-6 text-center text-xs text-slate-500">
+        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div>
+            DisasterAI Real-Time Emergency Operations Platform • Data: USGS Seismology • NASA EONET • GDACS • Open-Meteo
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" />
+            <span>Continuous Polling Active</span>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }

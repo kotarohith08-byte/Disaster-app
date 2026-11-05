@@ -38,7 +38,9 @@ def create_app(config_class=Config):
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(incidents_bp, url_prefix='/api/incidents')
     app.register_blueprint(ai_bp, url_prefix='/api/ai')
+    from backend.routes.live import live_bp
     app.register_blueprint(analytics_bp, url_prefix='/api/analytics')
+    app.register_blueprint(live_bp, url_prefix='/api/live')
 
     @app.route('/uploads/<path:filename>')
     def serve_upload(filename):

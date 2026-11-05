@@ -5,11 +5,12 @@ import {
   AlertTriangle, 
   ShieldCheck, 
   Cpu, 
-  Users, 
   Calendar, 
   CheckCircle2, 
   ExternalLink,
-  PhoneCall
+  PhoneCall,
+  Radio,
+  Globe2
 } from 'lucide-react';
 
 export default function IncidentDetailModal({ incident, onClose }) {
@@ -19,11 +20,9 @@ export default function IncidentDetailModal({ incident, onClose }) {
   const isHigh = incident.severity === 'HIGH';
   const isMed = incident.severity === 'MEDIUM';
 
-  const factors = incident.severity_factors || {};
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="relative w-full max-w-2xl bg-[#0f172a] border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
+      <div className="relative w-full max-w-2xl bg-[#0a0f1d] border border-slate-700 rounded-3xl p-6 sm:p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
         {/* Close Button */}
         <button
           onClick={onClose}
@@ -46,9 +45,14 @@ export default function IncidentDetailModal({ incident, onClose }) {
             }`}>
               {incident.severity} SEVERITY
             </span>
-            <span className="text-xs font-semibold uppercase px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-              Status: {incident.status}
-            </span>
+
+            {incident.is_live && (
+              <span className="text-xs font-bold px-2 py-0.5 rounded-lg bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                Live Verified Feed
+              </span>
+            )}
+
             {incident.is_demo && (
               <span className="text-xs font-semibold px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
                 Demo Record
@@ -60,20 +64,20 @@ export default function IncidentDetailModal({ incident, onClose }) {
           <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
             <span className="flex items-center gap-1">
               <MapPin className="w-3.5 h-3.5 text-red-400" />
-              {incident.location} ({incident.latitude.toFixed(4)}, {incident.longitude.toFixed(4)})
+              {incident.location} ({incident.latitude.toFixed(4)}°, {incident.longitude.toFixed(4)}°)
             </span>
-            {incident.created_at && (
+            {incident.event_time && (
               <span className="flex items-center gap-1">
                 <Calendar className="w-3.5 h-3.5 text-blue-400" />
-                {new Date(incident.created_at).toLocaleString()}
+                {new Date(incident.event_time).toLocaleString()}
               </span>
             )}
           </div>
         </div>
 
-        {/* Description & Image */}
+        {/* Description & Technical Telemetry Card */}
         <div className="space-y-4">
-          <div className="bg-slate-900/80 p-4 rounded-2xl border border-slate-800 text-sm text-slate-300 leading-relaxed">
+          <div className="bg-slate-900/90 p-4 rounded-2xl border border-slate-800 text-sm text-slate-300 leading-relaxed">
             {incident.description}
           </div>
 
@@ -81,76 +85,84 @@ export default function IncidentDetailModal({ incident, onClose }) {
             <div className="rounded-2xl overflow-hidden border border-slate-700 max-h-64">
               <img
                 src={incident.image_path}
-                alt="Incident Photo"
+                alt="Incident Evidence"
                 className="w-full h-full object-cover"
               />
             </div>
           )}
 
-          {/* AI Metrics Card */}
-          <div className="p-4 bg-slate-800/60 border border-slate-700/80 rounded-2xl space-y-3">
+          {/* Telemetry & Metadata Grid */}
+          <div className="p-4 bg-slate-900/60 border border-slate-800 rounded-2xl space-y-3">
             <h4 className="text-xs font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
-              <Cpu className="w-4 h-4" />
-              DisasterAI Model Intelligence
+              <Radio className="w-4 h-4 text-blue-400" />
+              Sensor Attribution & Parameters
             </h4>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div className="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">AI Prediction</span>
-                <span className="font-bold text-white text-sm">{incident.predicted_category || incident.category}</span>
-              </div>
-              <div className="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Confidence</span>
-                <span className="font-bold text-blue-400 text-sm">{incident.prediction_confidence}%</span>
-              </div>
-              <div className="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Severity Score</span>
-                <span className="font-bold text-amber-400 text-sm">{incident.severity_score}/100</span>
-              </div>
-              <div className="bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
-                <span className="text-slate-400 block text-[10px]">Affected People</span>
-                <span className="font-bold text-white text-sm">~{incident.affected_people || 0}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Actionable Safety Guidance Checklist */}
-          {incident.safety_guidance && (
-            <div className="p-5 bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-700 rounded-2xl space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4" />
-                  Recommended Public Safety Action
-                </h4>
-                <span className="text-[10px] text-slate-400">Verified Guidelines</span>
+              <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/60">
+                <span className="text-slate-400 block text-[10px]">Primary Source</span>
+                <span className="font-bold text-white text-sm truncate block">{incident.source || 'DisasterAI'}</span>
               </div>
 
-              {incident.safety_guidance.general_guidance && (
-                <div className="text-xs font-semibold text-white bg-emerald-500/10 border border-emerald-500/20 p-2.5 rounded-xl">
-                  {incident.safety_guidance.general_guidance}
+              {incident.magnitude !== undefined && incident.magnitude !== null && (
+                <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/60">
+                  <span className="text-slate-400 block text-[10px]">Richter Magnitude</span>
+                  <span className="font-bold text-amber-400 text-sm">M {incident.magnitude}</span>
                 </div>
               )}
 
-              {incident.safety_guidance.action_steps && (
-                <ul className="space-y-1.5 text-xs text-slate-300">
-                  {incident.safety_guidance.action_steps.map((step, idx) => (
-                    <li key={idx} className="flex items-start gap-2">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
-                      <span>{step}</span>
-                    </li>
-                  ))}
-                </ul>
+              {incident.depth_km !== undefined && incident.depth_km !== null && (
+                <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/60">
+                  <span className="text-slate-400 block text-[10px]">Hypocenter Depth</span>
+                  <span className="font-bold text-white text-sm">{incident.depth_km} km</span>
+                </div>
               )}
-            </div>
-          )}
 
-          {/* Emergency Helpline Banner */}
-          <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center justify-between text-xs text-red-300">
-            <div className="flex items-center gap-2">
-              <PhoneCall className="w-4 h-4 text-red-400 animate-pulse" />
-              <span>National Distress Center: <strong>Dial 112</strong></span>
+              <div className="bg-slate-800/60 p-2.5 rounded-xl border border-slate-700/60">
+                <span className="text-slate-400 block text-[10px]">Verification Status</span>
+                <span className="font-bold text-emerald-400 text-sm">
+                  {incident.verified_warning ? 'Official Alert' : 'Sensor Logged'}
+                </span>
+              </div>
             </div>
-            <span className="text-[11px] text-red-400/80">Immediate Life Safety Priority</span>
+
+            {incident.source_url && (
+              <div className="pt-2 flex items-center justify-between text-xs">
+                <span className="text-slate-400">Official Bulletin Reference:</span>
+                <a
+                  href={incident.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-400 hover:text-blue-300 font-semibold underline flex items-center gap-1"
+                >
+                  <span>Open Primary Source Bulletin</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            )}
+          </div>
+
+          {/* Actionable Safety Guidance */}
+          <div className="p-5 bg-gradient-to-br from-slate-900 to-[#0a0f1d] border border-slate-800 rounded-2xl space-y-3">
+            <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4" />
+              Verified Public Safety Directives
+            </h4>
+
+            <ul className="space-y-1.5 text-xs text-slate-300">
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                <span>Maintain situational awareness via official meteorological and emergency civil defense broadcasts.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                <span>Keep utility shutoffs (gas, electricity) identified and emergency 72-hour food/water reserves ready.</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                <span>In life-threatening situations, call national unified emergency dispatch (Dial <strong>112</strong>).</span>
+              </li>
+            </ul>
           </div>
         </div>
       </div>

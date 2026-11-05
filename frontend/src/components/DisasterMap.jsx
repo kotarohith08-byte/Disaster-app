@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { 
@@ -10,174 +10,235 @@ import {
   Calendar, 
   ShieldCheck, 
   Info,
-  Maximize2
+  Globe2,
+  ExternalLink,
+  Flame,
+  Radio,
+  Activity,
+  Waves,
+  Wind
 } from 'lucide-react';
 
-// Create custom SVG Leaflet Marker based on Severity
-const createSeverityIcon = (severity, category) => {
+// Custom Leaflet DivIcon for Live Events based on Category & Severity
+const createCustomDisasterIcon = (category, severity, isLive = true) => {
   const colors = {
-    CRITICAL: { bg: '#ef4444', border: '#7f1d1d', pulse: '#fca5a5' },
-    HIGH: { bg: '#f97316', border: '#7c2d12', pulse: '#fdba74' },
-    MEDIUM: { bg: '#eab308', border: '#713f12', pulse: '#fef08a' },
-    LOW: { bg: '#3b82f6', border: '#1e3a8a', pulse: '#93c5fd' },
+    CRITICAL: '#ef4444',
+    HIGH: '#f97316',
+    MEDIUM: '#eab308',
+    LOW: '#38bdf8'
   };
-
-  const c = colors[severity] || colors.MEDIUM;
+  const color = colors[severity] || colors.MEDIUM;
   const isCritical = severity === 'CRITICAL';
 
+  let symbol = '⚠️';
+  if (category === 'Earthquake') symbol = '⚡';
+  else if (category === 'Fire') symbol = '🔥';
+  else if (category === 'Cyclone') symbol = '🌀';
+  else if (category === 'Flood') symbol = '🌊';
+  else if (category === 'Landslide') symbol = '⛰️';
+
   const html = `
-    <div style="position: relative; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
-      ${isCritical ? `<div style="position: absolute; width: 32px; height: 32px; border-radius: 50%; background-color: ${c.bg}; opacity: 0.4; animation: ping 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>` : ''}
-      <div style="width: 24px; height: 24px; border-radius: 50%; background-color: ${c.bg}; border: 3px solid #ffffff; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 10;">
-        <div style="width: 8px; height: 8px; border-radius: 50%; background-color: #ffffff;"></div>
+    <div style="position: relative; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; cursor: pointer;">
+      ${isCritical ? `<div style="position: absolute; width: 34px; height: 34px; border-radius: 50%; background-color: ${color}; opacity: 0.4; animation: ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite;"></div>` : ''}
+      <div style="width: 26px; height: 26px; border-radius: 50%; background-color: ${color}; border: 2.5px solid #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; font-size: 13px; z-index: 10;">
+        ${symbol}
       </div>
     </div>
   `;
 
   return L.divIcon({
     html,
-    className: 'custom-disaster-marker',
-    iconSize: [32, 32],
-    iconAnchor: [16, 16],
-    popupAnchor: [0, -16],
+    className: 'custom-disaster-leaflet-icon',
+    iconSize: [34, 34],
+    iconAnchor: [17, 17],
+    popupAnchor: [0, -17],
   });
 };
 
-function ChangeMapView({ coords }) {
+function ChangeMapView({ center, zoom }) {
   const map = useMap();
-  if (coords) {
-    map.setView(coords, map.getZoom());
-  }
+  useEffect(() => {
+    if (center) {
+      map.setView(center, zoom || 5);
+    }
+  }, [center, zoom, map]);
   return null;
 }
 
-export default function DisasterMap({ incidents = [], onSelectIncident }) {
+export default function DisasterMap({ 
+  liveEvents = [], 
+  communityIncidents = [], 
+  onSelectIncident,
+  initialRegion = 'global'
+}) {
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [selectedSeverity, setSelectedSeverity] = useState('All');
-  const [selectedStatus, setSelectedStatus] = useState('All');
+  const [sourceFilter, setSourceFilter] = useState('all'); // 'all', 'live', 'community'
+  const [regionMode, setRegionMode] = useState(initialRegion); // 'global' or 'india'
   const [searchQuery, setSearchQuery] = useState('');
-  const [activeCenter, setActiveCenter] = useState(null);
+  const [targetView, setTargetView] = useState({ center: [20.0, 10.0], zoom: 2 });
 
-  const categories = ['All', 'Flood', 'Earthquake', 'Fire', 'Cyclone', 'Landslide', 'Other'];
+  const categories = ['All', 'Earthquake', 'Fire', 'Cyclone', 'Flood', 'Landslide', 'Other'];
   const severities = ['All', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
-  const statuses = ['All', 'Active', 'Under Review', 'Verified', 'Resolved'];
 
-  // Filtered incidents
-  const filtered = useMemo(() => {
-    return incidents.filter((inc) => {
-      const matchCat = selectedCategory === 'All' || inc.category.toLowerCase() === selectedCategory.toLowerCase();
-      const matchSev = selectedSeverity === 'All' || inc.severity === selectedSeverity;
-      const matchStatus = selectedStatus === 'All' || inc.status.toLowerCase() === selectedStatus.toLowerCase();
-      const matchSearch = !searchQuery || 
-        inc.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        inc.location.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        inc.description.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchCat && matchSev && matchStatus;
-    });
-  }, [incidents, selectedCategory, selectedSeverity, selectedStatus, searchQuery]);
-
-  // Default center: India/Central Asia or first incident's coords
-  const mapCenter = useMemo(() => {
-    if (filtered.length > 0) {
-      return [filtered[0].latitude, filtered[0].longitude];
+  // Switch between Global and India view
+  const handleToggleRegion = (mode) => {
+    setRegionMode(mode);
+    if (mode === 'india') {
+      setTargetView({ center: [22.0, 79.0], zoom: 5 });
+    } else {
+      setTargetView({ center: [20.0, 10.0], zoom: 2 });
     }
-    return [20.5937, 78.9629]; // Default Central coords
-  }, [filtered]);
+  };
+
+  // Combine live telemetry events + community incidents
+  const allEvents = useMemo(() => {
+    const liveItems = liveEvents.map(e => ({ ...e, event_type: 'live' }));
+    const communityItems = communityIncidents.map(e => ({ 
+      ...e, 
+      event_type: 'community',
+      source: e.is_demo ? 'Community Report (Demo)' : 'Verified Citizen Report'
+    }));
+    return [...liveItems, ...communityItems];
+  }, [liveEvents, communityIncidents]);
+
+  // Filtered dataset
+  const filtered = useMemo(() => {
+    return allEvents.filter(ev => {
+      // Region filter
+      if (regionMode === 'india' && !ev.is_in_india) return false;
+
+      // Source filter
+      if (sourceFilter === 'live' && ev.event_type !== 'live') return false;
+      if (sourceFilter === 'community' && ev.event_type !== 'community') return false;
+
+      // Category filter
+      if (selectedCategory !== 'All' && ev.category.toLowerCase() !== selectedCategory.toLowerCase()) return false;
+
+      // Severity filter
+      if (selectedSeverity !== 'All' && ev.severity !== selectedSeverity) return false;
+
+      // Search query
+      if (searchQuery) {
+        const q = searchQuery.toLowerCase();
+        const matchTitle = (ev.title || '').toLowerCase().includes(q);
+        const matchLoc = (ev.location || '').toLowerCase().includes(q);
+        const matchSrc = (ev.source || '').toLowerCase().includes(q);
+        if (!matchTitle && !matchLoc && !matchSrc) return false;
+      }
+
+      return true;
+    });
+  }, [allEvents, regionMode, sourceFilter, selectedCategory, selectedSeverity, searchQuery]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-4">
-      {/* Header and Filter Controls */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-6 shadow-xl">
+      
+      {/* Control Header */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-5 shadow-xl">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
           <div>
-            <h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
-              <MapPin className="w-6 h-6 text-red-500" />
-              Live Interactive Disaster Map
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-400 mt-0.5">
-              Visualizing {filtered.length} of {incidents.length} reported incidents with geospatial severity indicators
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+              <h1 className="text-xl sm:text-2xl font-black text-white flex items-center gap-2">
+                <MapPin className="w-6 h-6 text-red-500" />
+                Interactive Live Disaster GIS Map
+              </h1>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              Plotting {filtered.length} active global & regional incidents from USGS, NASA EONET, GDACS, and Community Feeds.
             </p>
           </div>
 
-          {/* Demonstration Notice Badge */}
-          <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs">
-            <Info className="w-4 h-4 flex-shrink-0" />
-            <span>Map markers include academic demonstration records to showcase spatial classification.</span>
+          {/* Region Switcher: Global vs India */}
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700 text-xs font-bold">
+              <button
+                onClick={() => handleToggleRegion('global')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  regionMode === 'global' ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                🌍 Global View
+              </button>
+              <button
+                onClick={() => handleToggleRegion('india')}
+                className={`px-3 py-1.5 rounded-lg transition-all ${
+                  regionMode === 'india' ? 'bg-amber-500 text-slate-950 font-black shadow-sm' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                🇮🇳 India View
+              </button>
+            </div>
           </div>
         </div>
 
-        {/* Filter Pills */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Search Box */}
+        {/* Filter Pills Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+          {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search location, title..."
-              className="w-full pl-9 pr-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+              placeholder="Search location, source, title..."
+              className="w-full pl-9 pr-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
             />
           </div>
 
-          {/* Category Filter */}
-          <div>
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-blue-500"
-            >
-              {categories.map((c) => (
-                <option key={c} value={c}>Category: {c}</option>
-              ))}
-            </select>
-          </div>
+          {/* Category */}
+          <select
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-blue-500"
+          >
+            {categories.map((c) => (
+              <option key={c} value={c}>Category: {c}</option>
+            ))}
+          </select>
 
-          {/* Severity Filter */}
-          <div>
-            <select
-              value={selectedSeverity}
-              onChange={(e) => setSelectedSeverity(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-blue-500"
-            >
-              {severities.map((s) => (
-                <option key={s} value={s}>Severity: {s}</option>
-              ))}
-            </select>
-          </div>
+          {/* Severity */}
+          <select
+            value={selectedSeverity}
+            onChange={(e) => setSelectedSeverity(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-blue-500"
+          >
+            {severities.map((s) => (
+              <option key={s} value={s}>Severity: {s}</option>
+            ))}
+          </select>
 
-          {/* Status Filter */}
-          <div>
-            <select
-              value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs sm:text-sm text-white focus:outline-none focus:border-blue-500"
-            >
-              {statuses.map((st) => (
-                <option key={st} value={st}>Status: {st}</option>
-              ))}
-            </select>
-          </div>
+          {/* Source Layer Filter */}
+          <select
+            value={sourceFilter}
+            onChange={(e) => setSourceFilter(e.target.value)}
+            className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-blue-500"
+          >
+            <option value="all">Sources: All Layers</option>
+            <option value="live">Sources: Live Sensors (USGS/NASA/GDACS)</option>
+            <option value="community">Sources: Community Reports</option>
+          </select>
         </div>
 
         {/* Severity Legend */}
-        <div className="flex flex-wrap items-center gap-4 mt-4 pt-3 border-t border-slate-800/80 text-xs text-slate-400">
-          <span className="font-semibold text-slate-300">Severity Indicators:</span>
+        <div className="flex flex-wrap items-center gap-4 mt-3 pt-3 border-t border-slate-800/80 text-[11px] text-slate-400">
+          <span className="font-semibold text-slate-300">Severity Codes:</span>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-full bg-red-500 inline-block shadow-sm shadow-red-500/50" />
-            <span className="text-red-400 font-semibold">CRITICAL</span>
+            <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping inline-block" />
+            <span className="text-red-400 font-bold">CRITICAL</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-full bg-orange-500 inline-block" />
-            <span className="text-orange-400 font-semibold">HIGH</span>
+            <span className="w-2.5 h-2.5 rounded-full bg-orange-500 inline-block" />
+            <span className="text-orange-400 font-bold">HIGH</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-full bg-amber-400 inline-block" />
-            <span className="text-amber-400 font-semibold">MEDIUM</span>
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400 inline-block" />
+            <span className="text-amber-400 font-bold">MEDIUM</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-full bg-blue-500 inline-block" />
-            <span className="text-blue-400 font-semibold">LOW</span>
+            <span className="w-2.5 h-2.5 rounded-full bg-blue-400 inline-block" />
+            <span className="text-blue-400 font-bold">LOW</span>
           </div>
         </div>
       </div>
@@ -185,57 +246,72 @@ export default function DisasterMap({ incidents = [], onSelectIncident }) {
       {/* Map Canvas and Side list layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Leaflet Map Canvas */}
-        <div className="lg:col-span-2 h-[560px] rounded-2xl overflow-hidden border border-slate-800 relative shadow-2xl">
+        <div className="lg:col-span-2 h-[600px] rounded-3xl overflow-hidden border border-slate-800 relative shadow-2xl">
           <MapContainer
-            center={mapCenter}
-            zoom={5}
+            center={targetView.center}
+            zoom={targetView.zoom}
             scrollWheelZoom={true}
             style={{ width: '100%', height: '100%' }}
           >
-            {activeCenter && <ChangeMapView coords={activeCenter} />}
+            <ChangeMapView center={targetView.center} zoom={targetView.zoom} />
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
 
-            {filtered.map((inc) => (
+            {filtered.map((ev) => (
               <Marker
-                key={inc.id}
-                position={[inc.latitude, inc.longitude]}
-                icon={createSeverityIcon(inc.severity, inc.category)}
+                key={ev.id}
+                position={[ev.latitude, ev.longitude]}
+                icon={createCustomDisasterIcon(ev.category, ev.severity, ev.is_live)}
               >
                 <Popup className="disaster-custom-popup">
-                  <div className="p-1 space-y-2 max-w-xs">
-                    <div className="flex items-center justify-between gap-2">
+                  <div className="p-1 space-y-2 max-w-xs text-xs">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-slate-800 text-blue-400 border border-slate-700">
-                        {inc.category}
+                        {ev.category}
                       </span>
-                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded ${
-                        inc.severity === 'CRITICAL' ? 'bg-red-500 text-white' :
-                        inc.severity === 'HIGH' ? 'bg-orange-500 text-white' :
-                        inc.severity === 'MEDIUM' ? 'bg-amber-500 text-slate-900 font-bold' :
+                      <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded ${
+                        ev.severity === 'CRITICAL' ? 'bg-red-500 text-white' :
+                        ev.severity === 'HIGH' ? 'bg-orange-500 text-white' :
+                        ev.severity === 'MEDIUM' ? 'bg-amber-500 text-slate-900' :
                         'bg-blue-500 text-white'
                       }`}>
-                        {inc.severity}
+                        {ev.severity}
                       </span>
                     </div>
 
-                    <h4 className="font-bold text-sm text-white leading-snug">{inc.title}</h4>
-                    <p className="text-xs text-slate-300 line-clamp-2">{inc.description}</p>
+                    <h4 className="font-bold text-sm text-white leading-snug">{ev.title}</h4>
+                    <p className="text-xs text-slate-300 line-clamp-3">{ev.description}</p>
 
                     <div className="text-[11px] text-slate-400 space-y-1 pt-1 border-t border-slate-700/60">
-                      <div>📍 {inc.location}</div>
-                      <div>👥 People Affected: ~{inc.affected_people || 0}</div>
-                      <div>🤖 AI Confidence: {inc.prediction_confidence}%</div>
+                      <div>📍 {ev.location}</div>
+                      <div>📡 Source: <strong className="text-slate-300">{ev.source}</strong></div>
+                      {ev.magnitude && <div>⚡ Magnitude: <strong className="text-amber-400">M {ev.magnitude}</strong> (Depth: {ev.depth_km} km)</div>}
+                      {ev.event_time && <div>🕒 Time: {new Date(ev.event_time).toLocaleString()}</div>}
                     </div>
 
-                    <button
-                      onClick={() => onSelectIncident(inc)}
-                      className="w-full mt-2 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-1.5"
-                    >
-                      <ShieldCheck className="w-3.5 h-3.5" />
-                      View Safety Guidance & Details
-                    </button>
+                    <div className="pt-2 flex items-center gap-2">
+                      <button
+                        onClick={() => onSelectIncident(ev)}
+                        className="flex-1 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-bold rounded-lg transition-colors flex items-center justify-center gap-1"
+                      >
+                        <ShieldCheck className="w-3.5 h-3.5" />
+                        Inspect Details
+                      </button>
+
+                      {ev.source_url && (
+                        <a
+                          href={ev.source_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg border border-slate-700"
+                          title="Open official bulletin"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </Popup>
               </Marker>
@@ -243,63 +319,51 @@ export default function DisasterMap({ incidents = [], onSelectIncident }) {
           </MapContainer>
         </div>
 
-        {/* Sidebar Incident List */}
-        <div className="h-[560px] bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col shadow-xl">
+        {/* Sidebar List */}
+        <div className="h-[600px] bg-slate-900/90 border border-slate-800 rounded-3xl p-4 flex flex-col shadow-xl">
           <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-3">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-400" />
-              Incidents In View ({filtered.length})
+              <Activity className="w-4 h-4 text-emerald-400" />
+              Active Incidents In View ({filtered.length})
             </h3>
-            <span className="text-[11px] text-slate-400">Click to focus map</span>
+            <span className="text-[10px] text-slate-500">Click to focus</span>
           </div>
 
           <div className="flex-1 overflow-y-auto space-y-2.5 pr-1">
             {filtered.length === 0 ? (
-              <div className="text-center py-16 text-slate-500 text-xs">
-                No incidents match the active search and filter criteria.
+              <div className="text-center py-20 text-slate-500 text-xs">
+                No active disaster incidents match the search criteria.
               </div>
             ) : (
-              filtered.map((inc) => (
+              filtered.slice(0, 80).map((ev) => (
                 <div
-                  key={inc.id}
+                  key={ev.id}
                   onClick={() => {
-                    setActiveCenter([inc.latitude, inc.longitude]);
+                    setTargetView({ center: [ev.latitude, ev.longitude], zoom: 7 });
                   }}
-                  className="p-3 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600 rounded-xl cursor-pointer transition-all space-y-1.5 group"
+                  className="p-3 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 hover:border-slate-600 rounded-2xl cursor-pointer transition-all space-y-1.5 group"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400">
-                      {inc.category}
+                    <span className="text-[10px] font-bold uppercase text-blue-400">
+                      {ev.category}
                     </span>
-                    <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
-                      inc.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
-                      inc.severity === 'HIGH' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
-                      inc.severity === 'MEDIUM' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+                    <span className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded ${
+                      ev.severity === 'CRITICAL' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+                      ev.severity === 'HIGH' ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
+                      ev.severity === 'MEDIUM' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
                       'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                     }`}>
-                      {inc.severity}
+                      {ev.severity}
                     </span>
                   </div>
 
                   <h5 className="text-xs font-semibold text-white group-hover:text-blue-300 transition-colors line-clamp-1">
-                    {inc.title}
+                    {ev.title}
                   </h5>
 
-                  <p className="text-[11px] text-slate-400 line-clamp-2">
-                    {inc.description}
-                  </p>
-
-                  <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
-                    <span className="truncate max-w-[140px]">📍 {inc.location}</span>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSelectIncident(inc);
-                      }}
-                      className="text-blue-400 hover:text-blue-300 font-medium"
-                    >
-                      Details & Recs →
-                    </button>
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1">
+                    <span className="truncate max-w-[150px]">📍 {ev.location}</span>
+                    <span className="text-slate-500">{ev.source.split(' ')[0]}</span>
                   </div>
                 </div>
               ))
